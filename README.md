@@ -205,7 +205,7 @@ Unsloth's custom implementation trades computation for memory:
 ## Challenges Faced
 
 
-### 2. Gradient Accumulation Configuration
+### 1. Gradient Accumulation Configuration
 
 **Problem**: Initial configuration had suboptimal effective batch size.
 
@@ -221,7 +221,7 @@ Unsloth's custom implementation trades computation for memory:
 
 **Impact**: More stable gradient estimates and smoother convergence.
 
-### 3. Loss Plateau at 0.6
+### 2. Loss Plateau at 0.6
 
 **Problem**: Training loss stuck at ~0.6 after 100 steps, showing no improvement.
 
@@ -239,56 +239,7 @@ Unsloth's custom implementation trades computation for memory:
 
 **Lesson**: Early stopping during initial plateau phase prevents actual learning. Full epoch training is essential.
 
-### 4. Device Allocation Error
-
-**Problem**: `TypeError: device() received an invalid combination of arguments` when using `device_map="balanced"`.
-
-**Root Cause**: 
-- `"balanced"` device mapping not properly supported in the training configuration
-- Incompatibility between Unsloth and device allocation strategy
-
-**Solution**:
-- Changed `device_map` from `"balanced"` to `"auto"` in both:
-  - `LLAMAFineTuner` class default parameter
-  - Model initialization cell
-- Auto device mapping properly distributes model across available GPUs
-
-**Impact**: Resolved device allocation errors; training proceeded successfully.
-
-### 5. Meta Tensor Copy Error
-
-**Problem**: `NotImplementedError: Cannot copy out of meta tensor; no data!` during training.
-
-**Root Cause**:
-- Using `unsloth_train()` wrapper caused meta tensor issues with multi-GPU setup
-- Incompatibility between gradient accumulation fixes and device mapping
-
-**Solution**:
-- Switched from `unsloth_train(trainer)` to standard `trainer.train()`
-- Updated `train()` method in `LLAMAFineTuner` class
-- Standard training method works correctly with multi-GPU configuration
-
-**Impact**: Training ran smoothly without tensor copy errors; no loss in performance or optimization benefits.
-
-### 6. Inference KeyError
-
-**Problem**: `KeyError: 'input_ids'` during evaluation and response generation.
-
-**Root Cause**:
-- Incorrect access pattern when extracting generated text from tokenizer
-- Hardcoded `"cuda"` device reference incompatible with auto device mapping
-
-**Solution**:
-- Fixed `generate_response()` method in `Evaluator` class:
-  - Changed `.to("cuda")` to `.to(self.model.device)` for automatic device detection
-  - Simplified response extraction by splitting on header tags
-  - Removed problematic `input_ids` access pattern
-- Applied same fix to `display_sample_responses()` method
-- Added progress indicators for long-running evaluations
-
-**Impact**: Evaluation code works correctly with device-distributed models; better user experience with progress tracking.
-
-### 7. Memory Management with Large Model
+### 3. Memory Management with Large Model
 
 **Problem**: 8B parameter model with long sequences (2020 tokens) pushes memory limits on 2x T4 GPUs.
 
@@ -318,17 +269,41 @@ Unsloth's custom implementation trades computation for memory:
 
 ### Training Metrics
 
-- **Total Training Steps**: 950 steps (0.5 epochs)
-- **Loss Progression**: Successfully broke through 0.6 plateau
-- **Training Configuration**: 
-  - Batch size: 2
-  - Gradient accumulation: 8 steps
-  - Effective batch size: 16
-  - Learning rate: 2e-4
-  - Warmup steps: 100
-  - Optimizer: AdamW 8-bit
-  - Scheduler: Cosine
-- **Hardware Utilization**: 2x Tesla T4 GPUs with auto device mapping
+**Loss Progression:**
+- **Initial Training Loss** (Step 1): 1.67
+- **Initial Eval Loss** (Step 10): 1.56
+- **Plateau Phase** (Steps 80-300): Loss stabilized around 0.62-0.63
+- **Breakthrough** (Step ~300): Loss began consistent descent
+- **Final Training Loss** (Step 950): 0.567
+- **Final Eval Loss** (Step 950): 0.552
+- **Best Eval Loss**: 0.552 at step 950
+
+**Gradient Norm Stability:**
+- Initial gradient norm: 1.39
+- Stable range throughout training: 0.22-0.36
+- Indicates healthy gradient flow and no exploding/vanishing gradients
+
+**Learning Rate Schedule:**
+- Warmup phase (Steps 0-100): Linear increase from 0 to 2e-4
+- Training phase (Steps 100-950): Cosine decay from 2e-4 to ~8e-7
+- Successfully prevented early instability and allowed smooth convergence
+
+**Training Configuration**: 
+- **Total Steps**: 950 (0.5 epochs)
+- **Batch size**: 2 per device
+- **Gradient accumulation**: 8 steps
+- **Effective batch size**: 16
+- **Peak learning rate**: 2e-4
+- **Warmup steps**: 100
+- **Optimizer**: AdamW 8-bit
+- **Scheduler**: Cosine
+- **Hardware**: 2x Tesla T4 GPUs with auto device mapping
+
+**Key Observations:**
+- Loss decreased by **66%** from initial 1.67 to final 0.567
+- Eval loss closely tracked training loss (no overfitting)
+- Breakthrough after step 300 confirmed need for extended training beyond initial 100 steps
+- Stable gradient norms indicate proper hyperparameter tuning
 
 ### Evaluation Status
 
